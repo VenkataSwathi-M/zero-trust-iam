@@ -1,0 +1,96 @@
+{
+  "info": {
+    "name": "Zero Trust Banking IAM",
+    "_postman_id": "b5c8f1f4-1234-5678-90ab-cdef12345678",
+    "description": "Postman collection for Zero Trust Banking IAM Core",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"agent_id\": \"agent-001\",\n  \"secret\": \"agent-secret\"\n}"
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8002/login",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8002",
+          "path": ["login"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Evaluate Trust",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identity_id\": \"agent-001\",\n  \"action\": \"view_balance\",\n  \"resource\": \"account-12345\"\n}"
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8002/evaluate-trust",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8002",
+          "path": ["evaluate-trust"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Access Decision",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identity_id\": \"agent-001\",\n  \"action\": \"transfer_funds\",\n  \"resource\": \"account-12345\"\n}"
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8002/access-decision",
+          "protocol": "http",
+          "host": ["127.0.0.1"],
+          "port": "8002",
+          "path": ["access-decision"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "access_token",
+      "value": ""
+    }
+  ]
+}
