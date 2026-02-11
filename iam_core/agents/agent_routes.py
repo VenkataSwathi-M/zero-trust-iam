@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from iam_core.models.agent import Agent
-from iam_core.models.db import get_db
+from iam_core.db.models import Agent
+from iam_core.db.database import get_db
 from iam_core.auth.jwt_utils import create_access_token
 
 agent_router = APIRouter(prefix="/agent", tags=["Agent"])

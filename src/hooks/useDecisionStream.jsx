@@ -1,24 +1,24 @@
 import { useEffect, useState } from "react";
 
 export default function useDecisionStream() {
-  const [events, setEvents] = useState([]);
+const [events, setEvents] = useState([]);
+  const [trustMap, setTrustMap] = useState({}); // agent_id -> trust
 
-  useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000/ws/decisions");
+useEffect(() => {
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws/decisions");
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
 
-      // Keep only latest 50 events (prevents memory leak)
-      setEvents((prev) => [data, ...prev].slice(0, 50));
-    };
+    setEvents((prev) => [data, ...prev].slice(0, 300));
 
-    ws.onerror = (err) => {
-      console.error("WebSocket error", err);
+    if (data.event === "TRUST_UPDATE") {
+        setTrustMap((prev) => ({ ...prev, [data.agent_id]: data.trust }));
+    }
     };
 
     return () => ws.close();
-  }, []);
+}, []);
 
-  return events;
+return { events, trustMap };
 }

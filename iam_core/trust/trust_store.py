@@ -1,30 +1,51 @@
-# iam_core/trust/trust_store.py
-
-from datetime import datetime
-
-TRUST_HISTORY = {}
-DEFAULT_TRUST = 50
+from sqlalchemy.orm import Session
+from iam_core.db.database import SessionLocal
+from iam_core.db.models import TrustScore
 
 
-def update_trust(identity_id, delta):
-    history = TRUST_HISTORY.setdefault(identity_id, [])
+class TrustStore:
+    def __init__(self):
+        self._cache = {}
 
-    last_trust = history[-1]["trust"] if history else DEFAULT_TRUST
-    new_trust = max(0, min(100, last_trust + delta))
+    def get_trust(self, subject: str) -> float:
+        if subject in self._cache:
+            return self._cache[subject]
 
-    history.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "trust": new_trust,
-        "delta": delta
-    })
+        db: Session = SessionLocal()
+        record = db.query(TrustScore).filter_by(subject=subject).first()
+        db.close()
 
-    return new_trust
+        score = record.score if record else 50.0
+        self._cache[subject] = score
+        return score
+
+    def update_trust(self, subject: str, delta: float):
+        db: Session = SessionLocal()
+        record = db.query(TrustScore).filter_by(subject=subject).first()
+
+        if not record:
+            record = TrustScore(subject=subject, score=50.0)
+            db.add(record)
+
+        record.score = max(0, min(100, record.score + delta))
+        db.commit()
+        db.close()
+
+        self._cache[subject] = record.score
+
+    # ---- Singleton Trust Store ----
+_trust_store = TrustStore()
 
 
-def get_trust_history(identity_id):
-    return TRUST_HISTORY.get(identity_id, [])
+def get_current_trust(identity_id: str):
+    """
+    Returns current trust score for an identity
+    """
+    return _trust_store.get_trust(identity_id)
 
 
-def get_current_trust(identity_id):
-    history = TRUST_HISTORY.get(identity_id)
-    return history[-1]["trust"] if history else DEFAULT_TRUST
+def get_trust_history(identity_id: str):
+    """
+    Returns trust history for an identity
+    """
+    return _trust_store.get_history(identity_id)

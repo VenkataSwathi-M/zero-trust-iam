@@ -1,7 +1,6 @@
 # iam_core/feedback/feedback_engine.py
-
-from iam_core.trust.trust_store import update_trust
-from iam_core.risk.risk_pattern_store import record_pattern
+from iam_core.trust.trust_engine import update_trust
+from iam_core.risk.risk_pattern_store import store_risk_event
 
 
 class FeedbackEngine:
@@ -21,11 +20,11 @@ class FeedbackEngine:
         update_trust(identity_id, delta)
 
         # ---- Persist Risk Pattern ----
-        record_pattern(
-            identity_id=identity_id,
-            risk_score=risk_score,
-            decision=decision
-        )
+        store_risk_event(
+    identity_id=identity_id,
+    risk_score=risk_score,
+    decision=decision
+)
 
         return {
             "trust_delta": delta,

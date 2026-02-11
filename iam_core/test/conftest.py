@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from iam_core.main import app
+from iam_core.api.main import app
 from iam_core.auth.jwt_utils import create_access_token
 from iam_core.trust.trust_store import TRUST_HISTORY
 from iam_core.session.session_store import SESSION_DB

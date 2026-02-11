@@ -2,7 +2,6 @@ from iam_core.risk.adaptive_risk_engine import AdaptiveRiskEngine
 from iam_core.trust.trust_store import update_trust
 from iam_core.risk.risk_pattern_store import RiskPatternStore
 
-
 class TrustFeedbackProcessor:
 
     def __init__(self):

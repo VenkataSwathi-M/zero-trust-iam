@@ -6,8 +6,6 @@ def test_admin_metrics(client, admin_token):
 
     assert response.status_code == 200
     assert "deny_rate" in response.json()
-
-
     data = response.json()
 
     # Core metrics must exist

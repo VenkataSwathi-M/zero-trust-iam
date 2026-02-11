@@ -1,6 +1,9 @@
 from iam_core.risk.risk_engine import RiskAssessmentEngine
 from iam_core.knowledge.security_knowledge_base import SecurityKnowledgeBase
 from iam_core.policy.policy_reasoner import PolicyReasoner
+from iam_core.feedback.feedback_engine import FeedbackEngine
+from iam_core.policy.policy_reasoner import PolicyReasoner
+from iam_core.risk.risk_pattern_store import store_risk_event
 
 
 class SecurityEventListener:
@@ -12,6 +15,7 @@ class SecurityEventListener:
         self.risk_engine = RiskAssessmentEngine()
         self.knowledge_base = SecurityKnowledgeBase()
         self.policy_reasoner = PolicyReasoner()
+        self.feedback_engine = FeedbackEngine()
 
     def handle_event(self, event_type, metadata=None):
         metadata = metadata or {}
@@ -44,11 +48,27 @@ class SecurityEventListener:
             risk_level=risk_level,
             metadata=metadata
         )
+        decision_bundle = self.policy_reasoner.decide(
+            signals, risk_score, risk_level, metadata
+        )
 
+        feedback = self.feedback_engine.apply(
+            identity_id=metadata.get("identity_id", "unknown"),
+            decision=decision_bundle["decision"],
+            risk_score=risk_score
+        )
+        store_risk_event(
+        identity=metadata.get("identity", "unknown"),
+            signals=signals,
+            risk_score=risk_score,
+            risk_level=risk_level
+        )
         return {
+            **decision_bundle,
             "event": event_type,
             "risk_score": risk_score,
             "risk_level": risk_level,
+            "feedback": feedback,
             "decision": policy_decision["decision"],
             "matched_rules": policy_decision["matched_rules"]
         }

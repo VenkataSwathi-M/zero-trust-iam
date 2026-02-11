@@ -1,7 +1,7 @@
 # iam_core/authz/authorization_engine.py
 
-from iam_core.authz.rbac_engine import RBACEngine
-from iam_core.authz.abac_engine import ABACEngine
+from iam_core.auth.rbac_engine import RBACEngine
+from iam_core.auth.abac_engine import ABACEngine
 
 class AuthorizationEngine:
     def __init__(self):

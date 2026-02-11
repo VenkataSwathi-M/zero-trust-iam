@@ -1,46 +1,33 @@
-from iam_core.policy.context_builder import ContextBuilder
-from iam_core.policy.rule_evaluator import RuleEvaluator
-from iam_core.policy.decision_engine import DecisionEngine
-from iam_core.trust.decay import apply_trust_decay
+from iam_core.db.models import Policy
 
 class PolicyReasoner:
-    """
-    Zero Trust Policy Decision Point (PDP)
-    RBAC → PBAC → ABAC → Trust → Enforcement
-    """
+    def decide(self, db, agent_id: str, trust: float, resource: str, action: str, pattern: str):
+        # 1) exact agent policy
+        p = db.query(Policy).filter(
+            Policy.agent_id == agent_id,
+            Policy.resource == resource,
+            Policy.action == action
+        ).first()
 
-    def __init__(self):
-        self.context_builder = ContextBuilder()
-        self.rule_evaluator = RuleEvaluator()
-        self.decision_engine = DecisionEngine()
+        # 2) fallback global policy
+        if not p:
+            p = db.query(Policy).filter(
+                Policy.agent_id == "ALL",
+                Policy.resource == resource,
+                Policy.action == action
+            ).first()
 
-    def decide(self, signals, risk_score, risk_level, metadata=None):
+        # 3) if policy exists, enforce min_trust + effect
+        if p:
+            if trust < p.min_trust:
+                return {"decision": "DENY", "reason": "min_trust_not_met", "policy": p.effect}
+            return {"decision": p.effect, "reason": "policy_match"}
 
-        # 1️⃣ Build context
-        context = self.context_builder.build_context(
-            signals=signals,
-            risk_score=risk_score,
-            risk_level=risk_level,
-            metadata=metadata
-        )
+        # 4) default zero-trust logic
+        if pattern in ["TRANSFER_ATTEMPT", "DESTRUCTIVE_ACTION"]:
+            return {"decision": "STEP_UP", "reason": "high_risk_pattern"}
 
-        # 2️⃣ PBAC rule evaluation
-        matched_rules = self.rule_evaluator.evaluate(context)
+        if trust < 0.4:
+            return {"decision": "DENY", "reason": "low_trust"}
 
-        # 3️⃣ Decision derivation
-        decision = self.decision_engine.derive(matched_rules)
-
-        # 4️⃣ Trust decay (Zero Trust principle)
-        apply_trust_decay(
-            identity_id=context.get("subject"),
-            minutes_idle=context.get("idle_minutes", 0)
-        )
-
-        # 5️⃣ Return explainable decision
-        return {
-            "decision": decision,
-            "matched_rules": [r["id"] for r in matched_rules],
-            "risk_score": risk_score,
-            "risk_level": risk_level,
-            "context": context
-        }
+        return {"decision": "ALLOW", "reason": "default_allow"}

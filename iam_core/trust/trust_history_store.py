@@ -1,12 +1,17 @@
-# Stores trust evolution per identity
+from datetime import datetime
+from sqlalchemy.orm import Session
 
-TRUST_HISTORY = {}
+from iam_core.db.database import SessionLocal
+from iam_core.db.models import TrustScore
 
-def record_trust(identity_id, trust_score, risk_level):
-    TRUST_HISTORY.setdefault(identity_id, []).append({
-        "trust": trust_score,
-        "risk": risk_level
-    })
 
-def get_trust_history(identity_id):
-    return TRUST_HISTORY.get(identity_id, [])
+class TrustHistoryStore:
+    def record(self, identity_id: str, score: float, context: dict):
+        db: Session = SessionLocal()
+        try:
+            # placeholder for audit logging / future table
+            print(
+                f"[TRUST HISTORY] {identity_id} → {score} | {context} @ {datetime.utcnow()}"
+            )
+        finally:
+            db.close()

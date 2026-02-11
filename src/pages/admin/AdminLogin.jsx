@@ -18,7 +18,7 @@ const [password, setPassword] = useState("");
 const handleLogin = (e) => {
     e.preventDefault();
 
-    // 🔐 later connect to backend (Zero Trust IAM core)
+    // later connect to backend (Zero Trust IAM core)
     console.log("Admin login:", email, password);
 
     // TEMP success redirect

@@ -1,66 +1,49 @@
 import { useState } from "react";
-import { Box, Button, Card, CardContent, TextField, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
-import { agentLogin } from "../../services/agentApi";
+import api from "../../services/api";
 
 export default function AgentLogin() {
-  const [agentId, setAgentId] = useState("");
-  const [error, setError] = useState("");
-  const navigate = useNavigate();
+  const nav = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [decisionId, setDecisionId] = useState("");
+  const [step, setStep] = useState(1);
 
-  const login = async () => {
-    try {
-      setError("");
-      const res = await agentLogin(agentId);
-
-      // Store Zero Trust session token
-      localStorage.setItem("token", res.access_token);
-
-      navigate("/agent/dashboard");
-    } catch (err) {
-      setError("Invalid Agent ID");
-    }
+  const sendOtp = async () => {
+    const res = await api.post("/agent/auth/login", { email, password });
+    setDecisionId(res.data.decision_id);
+    setStep(2);
+    alert("OTP sent (or printed in backend console)");
   };
 
+  const verifyOtp = async () => {
+    const res = await api.post("/agent/auth/verify-otp", {
+      email,
+      otp,
+      decision_id: decisionId,
+    });
+
+    localStorage.setItem("token", res.data.access_token);
+    nav("/agent/dashboard"); // ✅ redirect
+  };
+  localStorage.setItem("token", res.data.access_token);
+    console.log("TOKEN SAVED:", res.data.access_token);
+
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center"
-      }}
-    >
-      <Card sx={{ width: 360, borderRadius: 3 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Agent Login
-          </Typography>
-
-          <TextField
-            fullWidth
-            label="Agent ID"
-            value={agentId}
-            onChange={(e) => setAgentId(e.target.value)}
-            sx={{ mt: 2 }}
-          />
-
-          {error && (
-            <Typography color="error" sx={{ mt: 1 }}>
-              {error}
-            </Typography>
-          )}
-
-          <Button
-            fullWidth
-            sx={{ mt: 3 }}
-            variant="contained"
-            onClick={login}
-          >
-            Login
-          </Button>
-        </CardContent>
-      </Card>
-    </Box>
+    <div>
+      {step === 1 ? (
+        <>
+          <input placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} />
+          <input type="password" placeholder="Password" value={password} onChange={(e)=>setPassword(e.target.value)} />
+          <button onClick={sendOtp}>Send OTP</button>
+        </>
+      ) : (
+        <>
+          <input placeholder="OTP" value={otp} onChange={(e)=>setOtp(e.target.value)} />
+          <button disabled={!decisionId || !otp} onClick={verifyOtp}>Verify OTP</button>
+        </>
+      )}
+    </div>
   );
 }

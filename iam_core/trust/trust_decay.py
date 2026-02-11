@@ -1,14 +1,40 @@
-from datetime import datetime
+# iam_core/trust/trust_decay.py
 
-DECAY_RATE = 5        # trust points per hour
-MIN_TRUST = 20
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
 
-def apply_decay(trust_record):
-    last = trust_record["last_updated"]
-    trust = trust_record["trust"]
+from iam_core.db.database import SessionLocal
+from iam_core.db.models import TrustScore
 
-    hours_passed = (datetime.utcnow() - last).total_seconds() / 3600
-    decay = int(hours_passed * DECAY_RATE)
 
-    new_trust = max(MIN_TRUST, trust - decay)
-    return new_trust
+def apply_trust_decay(identity_id: str, minutes_idle: int):
+    """
+    Apply trust decay based on inactivity (Zero Trust principle).
+    Reduces trust score gradually when the identity is idle.
+    """
+
+    if minutes_idle <= 0:
+        return
+
+    decay_rate = 0.1  # trust points per minute idle
+    decay_amount = minutes_idle * decay_rate
+
+    db: Session = SessionLocal()
+    try:
+        record = (
+            db.query(TrustScore)
+            .filter(TrustScore.identity_id == identity_id)
+            .first()
+        )
+
+        if not record:
+            return
+
+        # Apply decay
+        record.score = max(0, record.score - decay_amount)
+        record.last_updated = datetime.utcnow()
+
+        db.commit()
+
+    finally:
+        db.close()
