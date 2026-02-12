@@ -31,3 +31,8 @@ class PolicyReasoner:
             return {"decision": "DENY", "reason": "low_trust"}
 
         return {"decision": "ALLOW", "reason": "default_allow"}
+    
+    RISK_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+    def risk_ok(current: str, max_allowed: str) -> bool:
+        return self.RISK_ORDER.get(current, 3) <= self.RISK_ORDER.get(max_allowed, 3)

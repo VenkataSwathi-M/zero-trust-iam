@@ -1,73 +1,130 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  Box, Card, CardContent, TextField, Button,
-  Typography, Table, TableHead, TableRow, TableCell, TableBody
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Button,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  Chip,
+  Alert,
 } from "@mui/material";
-import { createPolicy, getPolicies } from "../../services/adminApi";
+import { getPolicies } from "../../services/adminApi";
+
+function EffectChip({ effect }) {
+  const label = String(effect || "").toUpperCase();
+  if (label === "ALLOW") return <Chip label="ALLOW" color="success" size="small" />;
+  if (label === "DENY") return <Chip label="DENY" color="error" size="small" />;
+  return <Chip label={label || "UNKNOWN"} color="warning" size="small" />;
+}
 
 export default function Policies() {
-  const [form, setForm] = useState({
-    name: "",
-    resource: "",
-    action: "",
-    effect: "allow"
-  });
-  const [policies, setPolicies] = useState([]);
+  const navigate = useNavigate();
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    getPolicies().then(setPolicies);
-  }, []);
+  const load = async () => {
+    try {
+      setErr("");
+      setLoading(true);
+      const data = await getPolicies();
 
-  const handleCreate = async () => {
-    const policy = await createPolicy(form);
-    setPolicies(p => [...p, policy]);
-    setForm({ name: "", resource: "", action: "", effect: "allow" });
+      // backend might return {policies:[...]} or [...]
+      const list = Array.isArray(data) ? data : data?.policies || [];
+      setRows(list);
+    } catch (e) {
+      setErr(
+        e?.response?.data?.detail ||
+          e?.response?.data?.message ||
+          e?.message ||
+          "Failed to load policies"
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
+  useEffect(() => {
+    load();
+  }, []);
+
   return (
-    <Box p={3}>
-      <Card sx={{ mb: 3 }}>
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Typography variant="h6" fontWeight="bold">
+          Policies
+        </Typography>
+
+        <Button variant="contained" onClick={() => navigate("/admin/policies/create")}>
+          + Create Policy
+        </Button>
+      </Box>
+
+      {err && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {String(err)}
+        </Alert>
+      )}
+
+      <Card sx={{ mt: 2, borderRadius: 3 }}>
         <CardContent>
-          <Typography variant="h6">Create Policy</Typography>
+          <Typography sx={{ mb: 2, opacity: 0.8 }}>
+            {loading ? "Loading..." : `Total: ${rows.length}`}
+          </Typography>
 
-          {["name", "resource", "action", "effect"].map(f => (
-            <TextField
-              key={f}
-              label={f.toUpperCase()}
-              fullWidth
-              sx={{ mt: 2 }}
-              value={form[f]}
-              onChange={e => setForm({ ...form, [f]: e.target.value })}
-            />
-          ))}
-
-          <Button fullWidth variant="contained" sx={{ mt: 2 }} onClick={handleCreate}>
-            Create Policy
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Policies</Typography>
-          <Table>
+          <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell>Agent</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Resource</TableCell>
                 <TableCell>Action</TableCell>
                 <TableCell>Effect</TableCell>
+
+                <TableCell>Min Trust</TableCell>
+                <TableCell>Max Risk</TableCell>
+                <TableCell>Max Amount</TableCell>
+                <TableCell>MFA</TableCell>
+
+                <TableCell>Priority</TableCell>
+                <TableCell>Active</TableCell>
               </TableRow>
             </TableHead>
+
             <TableBody>
-              {policies.map(p => (
-                <TableRow key={p.id}>
-                  <TableCell>{p.name}</TableCell>
+              {rows.map((p) => (
+                <TableRow key={p.id || `${p.agent_id}-${p.resource}-${p.action}`}>
+                  <TableCell>{p.agent_id}</TableCell>
+                  <TableCell>{p.name || "-"}</TableCell>
                   <TableCell>{p.resource}</TableCell>
                   <TableCell>{p.action}</TableCell>
-                  <TableCell>{p.effect}</TableCell>
+                  <TableCell>
+                    <EffectChip effect={p.effect} />
+                  </TableCell>
+
+                  <TableCell>{p.min_trust ?? "-"}</TableCell>
+                  <TableCell>{p.max_risk ?? "-"}</TableCell>
+                  <TableCell>{p.max_amount ?? "-"}</TableCell>
+                  <TableCell>{p.require_mfa ? "YES" : "NO"}</TableCell>
+
+                  <TableCell>{p.priority ?? 1}</TableCell>
+                  <TableCell>{p.active ? "YES" : "NO"}</TableCell>
                 </TableRow>
               ))}
+
+              {rows.length === 0 && !loading && (
+                <TableRow>
+                  <TableCell colSpan={11} align="center">
+                    No policies found.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

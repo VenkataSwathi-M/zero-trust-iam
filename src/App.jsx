@@ -9,7 +9,6 @@ import AdminLogin from "./pages/admin/AdminLogin";
 import AdminDashboard from "./pages/admin/Dashboard";
 import Agents from "./pages/admin/Agents";
 import CreateAgent from "./pages/admin/CreateAgent";
-import Policies from "./pages/admin/Policies";
 
 // Agent pages
 import AgentLogin from "./pages/agent/AgentLogin";
@@ -18,6 +17,8 @@ import RequestAccess from "./pages/agent/RequestAccess";
 import BankingRead from "./pages/agent/BankingRead";
 import BankingWrite from "./pages/agent/BankingWrite";
 import BankingTransfer from "./pages/agent/BankingTransfer";
+import Policies from "./pages/admin/Policies";
+import CreatePolicy from "./pages/admin/CreatePolicy";
 
 
 export default function App() {
@@ -34,7 +35,8 @@ export default function App() {
         <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="agents" element={<Agents />} />
         <Route path="agents/create" element={<CreateAgent />} />
-        <Route path="policies" element={<Policies />} />
+        <Route path="/admin/policies" element={<Policies />} />
+        <Route path="/admin/policies/create" element={<CreatePolicy />} />
       </Route>
 
       {/* ----------- AGENT ----------- */}

@@ -1,7 +1,7 @@
-# iam_core/db/models.py
+import uuid
+from datetime import datetime
 from sqlalchemy import Column, String, Float, Boolean, DateTime, Integer, Text
 from sqlalchemy.sql import func
-from datetime import datetime
 from iam_core.db.database import Base
 
 
@@ -18,20 +18,6 @@ class Agent(Base):
     active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-class Policy(Base):
-    __tablename__ = "policies"
-
-    id = Column(String, primary_key=True)
-    agent_id = Column(String, index=True)  # "ALL" for global
-    resource = Column(String)
-    action = Column(String)
-    effect = Column(String)  # ALLOW / DENY / STEP_UP
-    min_trust = Column(Float, default=0.0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
 class AccessDecision(Base):
     __tablename__ = "access_decisions"
 
@@ -89,7 +75,7 @@ class TrustScore(Base):
     id = Column(Integer, primary_key=True, index=True)
     subject = Column(String, unique=True, index=True, nullable=False)
     score = Column(Float, default=50.0)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
 
 class TrustHistory(Base):
@@ -97,7 +83,29 @@ class TrustHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(String, index=True, nullable=False)
-    old_score = Column(Float)
-    new_score = Column(Float)
-    reason = Column(String)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    score = Column(Float, nullable=False)          # ✅ MUST exist (fixes your error)
+    reason = Column(String, default="event")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Policy(Base):
+    __tablename__ = "policies"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=True)
+
+    agent_id = Column(String, index=True, default="ALL")  # ✅ IMPORTANT
+
+    resource = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    effect = Column(String, default="ALLOW")  # ALLOW / DENY / STEP_UP
+
+    min_trust = Column(Float, default=0.0)     # 0.0 - 1.0
+    max_risk = Column(String, default="HIGH")  # LOW/MEDIUM/HIGH
+    max_amount = Column(Float, nullable=True)
+    require_mfa = Column(Boolean, default=False)
+
+    active = Column(Boolean, default=True)
+    priority = Column(Integer, default=1)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

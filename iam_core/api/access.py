@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import uuid
-import asyncio
 
 from iam_core.db.database import get_db
 from iam_core.db.models import Agent, AccessDecision, AuditLog, BankTransaction
@@ -18,17 +16,16 @@ router = APIRouter(tags=["Access"])
 policy = PolicyReasoner()
 risk_engine = RiskAssessmentEngine()
 
-class AccessRequest(BaseModel):
-    resource: str   # database/files/transactions
-    action: str     # read/write/transfer
-    metadata: dict = {}
-
 @router.post("/agentic-decision")
-def agentic_decision(
-    req: AccessRequest,
+async def agentic_decision(   # ✅ make async
+    req: dict,
     identity=Depends(get_current_identity),
     db: Session = Depends(get_db)
 ):
+    resource = req.get("resource")
+    action = req.get("action")
+    metadata = req.get("metadata", {})
+
     agent = db.query(Agent).filter(Agent.agent_id == identity["sub"]).first()
     if not agent:
         raise HTTPException(403, "Agent not found")
@@ -40,9 +37,8 @@ def agentic_decision(
     risk_score = round(1 - trust, 2)
     risk_level = risk_engine.classify_risk(risk_score)
 
-    pattern = detect_pattern(req.resource, req.action, trust)
+    pattern = detect_pattern(resource, action, trust)
 
-    # ✅ PASTE anomaly block EXACTLY HERE
     block, why = should_block(pattern, risk_level, trust)
     if block:
         decision = "DENY"
@@ -52,23 +48,22 @@ def agentic_decision(
             db=db,
             agent_id=agent.agent_id,
             trust=trust,
-            resource=req.resource,
-            action=req.action,
+            resource=resource,
+            action=action,
             pattern=pattern
         )
         decision = out["decision"]
         reason = out.get("reason", "policy_reasoner")
 
-    # Admin cap enforcement
-    if agent.max_access == "read" and req.action in ["write", "transfer", "delete", "upload"]:
+    if agent.max_access == "read" and action in ["write", "transfer", "delete", "upload"]:
         decision = "DENY"
         reason = "max_access_read_only"
 
     row = AccessDecision(
         id=str(uuid.uuid4()),
         agent_id=agent.agent_id,
-        resource=req.resource,
-        action=req.action,
+        resource=resource,
+        action=action,
         decision=decision,
         risk_score=risk_score,
         risk_level=risk_level,
@@ -82,12 +77,12 @@ def agentic_decision(
             id=str(uuid.uuid4()),
             agent_id=agent.agent_id,
             event_type="ACCESS_DENY",
-            message=f"{req.resource}:{req.action} denied ({reason})"
+            message=f"{resource}:{action} denied ({reason})"
         ))
 
-    if req.resource == "transactions" and req.action == "transfer":
-        amount = float(req.metadata.get("amount", 0))
-        to_owner = req.metadata.get("to", "unknown")
+    if resource == "transactions" and action == "transfer":
+        amount = float(metadata.get("amount", 0))
+        to_owner = metadata.get("to", "unknown")
         status = "SUCCESS" if decision == "ALLOW" else "DENIED"
         db.add(BankTransaction(
             id=str(uuid.uuid4()),
@@ -100,18 +95,19 @@ def agentic_decision(
 
     db.commit()
 
-    asyncio.create_task(decision_broadcaster.broadcast({
+    # ✅ NOW SAFE (we have event loop)
+    await decision_broadcaster.broadcast({
         "event": "ACCESS_DECISION",
         "agent_id": agent.agent_id,
-        "resource": req.resource,
-        "action": req.action,
+        "resource": resource,
+        "action": action,
         "decision": decision,
         "risk_score": risk_score,
         "risk_level": risk_level,
         "pattern": pattern,
         "trust": trust,
         "reason": reason,
-    }))
+    })
 
     return {
         "decision": decision,
