@@ -18,9 +18,9 @@ else:
             reason = context.get("authz_reason")
 
             if reason:
-                st.error(f"❌ Authorization Denied: {reason}")
+                st.error(f" Authorization Denied: {reason}")
             else:
-                st.success("✅ Authorization Successful")
+                st.success(" Authorization Successful")
 # ---- PYTHONPATH FIX ----
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT_DIR))

@@ -5,32 +5,39 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  CartesianGrid,
 } from "recharts";
 import { Card, CardContent, Typography } from "@mui/material";
 
-export default function RiskChart({ events = [] }) {
-  // only take access decision events which have risk_score
-  const filtered = events
-    .filter((e) => e?.event === "ACCESS_DECISION" && e?.risk_score !== undefined)
-    .slice(0, 50) // last 50 points (events array is usually newest-first)
-    .reverse();   // chart should go left->right old->new
+export default function RiskChart({ data = [] }) {
+  const safe = Array.isArray(data) ? data : [];
 
-  const data = filtered.map((e, idx) => ({
-    name: idx + 1,
-    risk: Number(e.risk_score) || 0,
+  const chartData = safe.map((r, idx) => ({
+    index: idx + 1,
+    risk: Number(r.risk ?? r.risk_score ?? 0),
+    decision: r.decision,
   }));
 
   return (
     <Card sx={{ borderRadius: 3 }}>
       <CardContent>
-        <Typography variant="h6">Live Risk Score</Typography>
+        <Typography fontWeight="bold" sx={{ mb: 1 }}>
+          Risk Score History
+        </Typography>
 
-        <ResponsiveContainer width="100%" height={250}>
-          <LineChart data={data}>
-            <XAxis hide />
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="index" />
             <YAxis domain={[0, 1]} />
             <Tooltip />
-            <Line type="monotone" dataKey="risk" strokeWidth={2} />
+            <Line
+              type="monotone"
+              dataKey="risk"
+              stroke="#ff4d4f"
+              strokeWidth={2}
+              dot={false}
+            />
           </LineChart>
         </ResponsiveContainer>
       </CardContent>

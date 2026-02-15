@@ -1,120 +1,202 @@
+# iam_core/api/banking.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 import uuid
+from datetime import datetime
 
 from iam_core.db.database import get_db
-from iam_core.db.models import Agent, BankAccount, BankTransaction
 from iam_core.auth.deps import get_current_identity
-
-# reuse your agentic decision endpoint logic by importing function OR copy the minimal decision logic
-from iam_core.risk.risk_engine import risk_score_from_trust, risk_level
-from iam_core.risk.patterns import detect_pattern
-from iam_core.agents.anomaly_agent import should_block
-from iam_core.policy.policy_reasoner import PolicyReasoner
+from iam_core.db.models import BankAccount, BankBeneficiary, BankTransaction, AuditLog, Agent
+from iam_core.api.ws_banking import banking_broadcaster  # (we create below)
+from fastapi import HTTPException
+from iam_core.session.session_store import get_session, get_effective_trust
 
 router = APIRouter(prefix="/banking", tags=["Banking"])
-policy = PolicyReasoner()
 
-def enforce_zero_trust(db: Session, agent: Agent, resource: str, action: str):
-    trust = float(agent.trust_level)
-    score = risk_score_from_trust(trust)
-    level = risk_level(score)
-    pattern = detect_pattern(resource, action, trust)
 
-    # anomaly agent block
-    block, why = should_block(pattern, level, trust)
-    if block:
-        return ("DENY", f"anomaly_agent:{why}", score, level, pattern)
+def require_step_up_if_needed(identity, reason: str, min_trust: float = 0.6):
+    sid = identity.get("sid")
+    s = get_session(sid)
+    if not s:
+        raise HTTPException(401, "Session missing")
 
-    # policy reasoner
-    out = policy.decide(db=db, agent_id=agent.agent_id, trust=trust, resource=resource, action=action, pattern=pattern)
-    decision = out["decision"]
-    reason = out.get("reason", "policy")
+    trust = get_effective_trust(sid)
+    step_up = bool(s.get("step_up", False))
 
-    # admin max access cap
-    if agent.max_access == "read" and action in ["write", "insert", "update", "transfer"]:
-        decision = "DENY"
-        reason = "max_access_read_only"
+    if trust < min_trust and not step_up:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "STEP_UP_REQUIRED",
+                "message": f"{reason}. Fingerprint verification required (trust={trust})."
+            }
+        )
 
-    return (decision, reason, score, level, pattern)
+@router.post("/profile")
+def update_profile(req: dict, identity=Depends(get_current_identity), db: Session = Depends(get_db)):
+    # simulate write
+    return {"message": f"Profile updated for {identity['sub']} (name={req.get('name')}, phone={req.get('phone')})"}
 
-@router.get("/accounts")
-def read_accounts(identity=Depends(get_current_identity), db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.agent_id == identity["sub"]).first()
-    if not agent:
-        raise HTTPException(401, "Agent not found")
+@router.get("/me")
+def my_account(identity=Depends(get_current_identity), db: Session = Depends(get_db)):
+    agent_id = identity["sub"]
+    acc = db.query(BankAccount).filter(BankAccount.agent_id == agent_id).first()
+    if not acc:
+        raise HTTPException(404, "Bank account not found")
+    return {
+        "agent_id": acc.agent_id,
+        "owner_name": acc.owner_name,
+        "account_no": acc.account_no,
+        "ifsc": acc.ifsc,
+        "balance": float(acc.balance),
+        "created_at": acc.created_at.isoformat() if acc.created_at else None,
+    }
 
-    decision, reason, *_ = enforce_zero_trust(db, agent, "banking_db", "read")
-    if decision != "ALLOW":
-        raise HTTPException(403, {"decision": decision, "reason": reason})
 
-    rows = db.query(BankAccount).all()
-    return [{"id": r.id, "owner": r.owner, "balance": r.balance} for r in rows]
+@router.get("/beneficiaries")
+def beneficiaries(identity=Depends(get_current_identity), db: Session = Depends(get_db)):
+    agent_id = identity["sub"]
+    rows = (
+        db.query(BankBeneficiary)
+        .filter(BankBeneficiary.agent_id == agent_id)
+        .order_by(desc(BankBeneficiary.created_at))
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "account_no": r.account_no,
+            "ifsc": r.ifsc,
+            "is_new": bool(r.is_new),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
 
-@router.post("/accounts")
-def insert_account(payload: dict, identity=Depends(get_current_identity), db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.agent_id == identity["sub"]).first()
-    if not agent:
-        raise HTTPException(401, "Agent not found")
+@router.get("/transactions")
+def my_transactions(limit: int = 50, identity=Depends(get_current_identity), db: Session = Depends(get_db)):
+    agent_id = identity["sub"]
+    rows = (
+        db.query(BankTransaction)
+        .filter(BankTransaction.agent_id == agent_id)
+        .order_by(desc(BankTransaction.created_at))
+        .limit(limit)
+        .all()
+    )
+    return [{
+    "id": r.id,
+    "to_owner": r.to_owner,
+    "type": getattr(r, "txn_type", "DEBIT"),
+    "amount": float(r.amount),
+    "status": r.status,
+    "description": getattr(r, "description", "") or "",
+    "created_at": r.created_at.isoformat() if r.created_at else None,}
+for r in rows
+]
 
-    decision, reason, *_ = enforce_zero_trust(db, agent, "banking_db", "insert")
-    if decision != "ALLOW":
-        raise HTTPException(403, {"decision": decision, "reason": reason})
-
-    owner = payload.get("owner")
-    balance = float(payload.get("balance", 0))
-    row = BankAccount(id=str(uuid.uuid4()), owner=owner, balance=balance)
-    db.add(row)
-    db.commit()
-    return {"status": "created", "id": row.id}
-
-@router.put("/accounts/{acc_id}")
-def update_account(acc_id: str, payload: dict, identity=Depends(get_current_identity), db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.agent_id == identity["sub"]).first()
-    if not agent:
-        raise HTTPException(401, "Agent not found")
-
-    decision, reason, *_ = enforce_zero_trust(db, agent, "banking_db", "update")
-    if decision != "ALLOW":
-        raise HTTPException(403, {"decision": decision, "reason": reason})
-
-    row = db.query(BankAccount).filter(BankAccount.id == acc_id).first()
-    if not row:
-        raise HTTPException(404, "Account not found")
-
-    row.balance = float(payload.get("balance", row.balance))
-    db.commit()
-    return {"status": "updated"}
 
 @router.post("/transfer")
-def transfer(payload: dict, identity=Depends(get_current_identity), db: Session = Depends(get_db)):
-    agent = db.query(Agent).filter(Agent.agent_id == identity["sub"]).first()
-    if not agent:
-        raise HTTPException(401, "Agent not found")
+async def transfer(
+    req: dict,
+    identity=Depends(get_current_identity),
+    db: Session = Depends(get_db)
+):
+    """
+    Realistic transfer endpoint.
+    We also write AuditLog + BankTransaction and broadcast to websocket.
+    """
+    agent_id = identity["sub"]
+    to_account = str(req.get("to_account", "")).strip()
+    amount = float(req.get("amount", 0))
+    note = str(req.get("note", "")).strip()
 
-    decision, reason, *_ = enforce_zero_trust(db, agent, "transactions", "transfer")
-    if decision != "ALLOW":
-        # record denied transaction too (optional)
-        tx = BankTransaction(
+    if not to_account or amount <= 0:
+        raise HTTPException(400, "to_account and amount required")
+
+    acc = db.query(BankAccount).filter(BankAccount.agent_id == agent_id).first()
+    if not acc:
+        raise HTTPException(404, "Account not found")
+
+    if acc.balance < amount:
+        db.add(AuditLog(
             id=str(uuid.uuid4()),
-            agent_id=agent.agent_id,
-            from_owner=agent.agent_id,
-            to_owner=str(payload.get("to_owner", "unknown")),
-            amount=float(payload.get("amount", 0)),
-            status="DENIED"
-        )
-        db.add(tx)
+            agent_id=agent_id,
+            event_type="TRANSFER_DENY",
+            message=f"Insufficient funds transfer ₹{amount} to {to_account}"
+        ))
         db.commit()
-        raise HTTPException(403, {"decision": decision, "reason": reason})
+        raise HTTPException(400, "Insufficient balance")
 
-    tx = BankTransaction(
+    # mark beneficiary as new/known
+    ben = db.query(BankBeneficiary).filter(
+        BankBeneficiary.agent_id == agent_id,
+        BankBeneficiary.account_no == to_account
+    ).first()
+
+    is_new_beneficiary = True
+    if ben:
+        is_new_beneficiary = bool(ben.is_new)
+        ben.is_new = False  # once used, not new anymore
+    else:
+        db.add(BankBeneficiary(
+            id=str(uuid.uuid4()),
+            agent_id=agent_id,
+            name="Saved Beneficiary",
+            account_no=to_account,
+            ifsc="ZTIA0001234",
+            is_new=True,
+        ))
+
+    # ✅ apply realistic rules (risk bump / status)
+    status = "SUCCESS"
+    risk_tag = "NORMAL"
+
+    if amount > 10000:
+        risk_tag = "HIGH_AMOUNT_TRANSFER"
+    if is_new_beneficiary:
+        risk_tag = "NEW_BENEFICIARY_TRANSFER"
+
+    # Debit
+    acc.balance = float(acc.balance) - amount
+
+    txn = BankTransaction(
         id=str(uuid.uuid4()),
-        agent_id=agent.agent_id,
-        from_owner=agent.agent_id,
-        to_owner=str(payload.get("to_owner", "unknown")),
-        amount=float(payload.get("amount", 0)),
-        status="SUCCESS"
+        agent_id=agent_id,
+        from_owner=agent_id,
+        to_owner=to_account,
+        amount=amount,
+        status=status,
+        created_at=datetime.utcnow()
     )
-    db.add(tx)
+    db.add(txn)
+
+    db.add(AuditLog(
+        id=str(uuid.uuid4()),
+        agent_id=agent_id,
+        event_type="TRANSFER_SUCCESS",
+        message=f"Transfer ₹{amount} to {to_account} ({risk_tag}) {note}"
+    ))
+
     db.commit()
-    return {"status": "SUCCESS", "tx_id": tx.id}
+
+    # ✅ realtime feed
+    await banking_broadcaster.broadcast({
+        "event": "BANK_TXN",
+        "agent_id": agent_id,
+        "to": to_account,
+        "amount": amount,
+        "status": status,
+        "risk_tag": risk_tag,
+        "time": txn.created_at.isoformat(),
+    })
+
+    return {
+        "ok": True,
+        "balance": float(acc.balance),
+        "txn_id": txn.id,
+        "risk_tag": risk_tag
+    }

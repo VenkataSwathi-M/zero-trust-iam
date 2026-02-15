@@ -28,7 +28,7 @@ class TrustFeedbackProcessor:
             outcome=decision
         )
 
-        # ---- ADAPT WEIGHTS 🧠 ----
+        # ---- ADAPT WEIGHTS ----
         self.risk_engine.adapt_weights(signals, decision)
 
         return {

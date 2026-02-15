@@ -1,163 +1,137 @@
 # iam_core/trust/trust_service.py
 
 from __future__ import annotations
+
 from datetime import datetime
+from typing import Optional
+
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 
-from iam_core.db.database import SessionLocal
-from iam_core.db.models import TrustScore, TrustHistory  # MUST exist in models.py
-
-
-# ----------------------------
-# Helpers
-# ----------------------------
-def _get_or_create_trust_row(db: Session, agent_id: str) -> TrustScore:
-    row = db.query(TrustScore).filter(TrustScore.subject == agent_id).first()
-    if not row:
-        row = TrustScore(subject=agent_id, score=50.0, updated_at=datetime.utcnow())
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-    return row
+from iam_core.db.models import TrustScore, TrustHistory, Agent
 
 
-# ----------------------------
-# REQUIRED EXPORT: update_trust
-# ----------------------------
-def update_trust(agent_id: str, delta: float, reason: str = "event") -> float:
+# ------------------------------
+# 1) Trust update (0.0 - 1.0 scale)
+# ------------------------------
+def update_trust(
+    db: Session,
+    agent_id: str,
+    delta: float,
+    reason: str = "event",
+) -> float:
     """
-    Update trust score in DB (0..100) and write trust history.
-    Returns new score.
+    Updates Agent.trust_level (0.0 - 1.0) and inserts TrustHistory point.
+    This is the function your EnforcementDispatcher expects.
+
+    delta: +/- value in 0..1 scale (example: -0.10, +0.02)
     """
-    db = SessionLocal()
-    try:
-        row = _get_or_create_trust_row(db, agent_id)
-        new_score = max(0.0, min(100.0, float(row.score) + float(delta)))
+    agent = db.query(Agent).filter(Agent.agent_id == agent_id).first()
+    if not agent:
+        return 0.0
 
-        row.score = new_score
-        row.updated_at = datetime.utcnow()
+    cur = float(agent.trust_level or 0.0)
+    new_val = max(0.0, min(1.0, cur + float(delta)))
+    agent.trust_level = round(new_val, 3)
 
-        hist = TrustHistory(
+    # store in trust_history (score field stores 0..1 in your project)
+    db.add(
+        TrustHistory(
             agent_id=agent_id,
-            score=new_score,
+            score=new_val,
             reason=reason,
-            created_at=datetime.utcnow(),
         )
-        db.add(hist)
-        db.commit()
-        return new_score
-    finally:
-        db.close()
+    )
+    db.flush()
+    return float(agent.trust_level)
 
 
-def get_trust(agent_id: str) -> float:
-    """Read current trust score (0..100)."""
-    db = SessionLocal()
-    try:
-        row = db.query(TrustScore).filter(TrustScore.subject == agent_id).first()
-        return float(row.score) if row else 50.0
-    finally:
-        db.close()
-
-
-def get_trust_metrics(limit: int = 50) -> dict:
-    """
-    For Admin Dashboard.
-    Returns latest trust scores and recent trust history.
-    """
-    db = SessionLocal()
-    try:
-        scores = db.query(TrustScore).all()
-        history = (
-            db.query(TrustHistory)
-            .order_by(TrustHistory.created_at.desc())
-            .limit(limit)
-            .all()
-        )
-
-        return {
-            "scores": [
-                {"agent_id": s.subject, "score": float(s.score), "updated_at": s.updated_at}
-                for s in scores
-            ],
-            "history": [
-                {
-                    "agent_id": h.agent_id,
-                    "score": float(h.score),
-                    "reason": h.reason,
-                    "created_at": h.created_at,
-                }
-                for h in history
-            ],
-        }
-    finally:
-        db.close()
-
-# ----------------------------
-# Backward/compatibility API
-# ----------------------------
-# ----------------------------
-# Backward/compatibility API
-# ----------------------------
+# ------------------------------
+# 2) Event-based trust (0 - 100 scale)
+# (Optional if you want scoring in 0..100 too)
+# ------------------------------
 def apply_trust_event(
     db: Session,
     agent_id: str,
     event: str,
-    delta: float | None = None,
-    reason: str | None = None,
+    delta: Optional[float] = None,
+    reason: Optional[str] = None,
 ) -> float:
     """
-    New + backward compatible.
-    - Uses the SAME db session (so it works inside API routes)
-    - Updates trust_scores (0..100)
-    - Inserts trust_history
-    - Syncs agents.trust_level (0..1)
-    - Returns new trust score (0..100)
+    Event-based trust scoring (0..100). Also syncs Agent.trust_level (0..1).
+    You can use this for 'signals'.
     """
-
     event = (event or "EVENT").upper()
     reason = reason or event
 
-    # Default mapping if delta not provided
     mapping = {
         "AUTH_FAIL": -5,
         "OTP_FAIL": -5,
-        "LOGIN_SUCCESS": +1,
-        "OTP_OK": +1,
+        "LOGIN_SUCCESS": +2,
+        "OTP_OK": +2,
         "ACCESS_DENY": -3,
-        "ACCESS_ALLOW": +0.5,
+        "ACCESS_ALLOW": +1,
         "ANOMALY_DETECTED": -8,
         "SESSION_ABUSE": -6,
+        "HIGH_RISK_TRANSFER": -10,
     }
 
     if delta is None:
         delta = mapping.get(event, 0)
 
-    # --- trust_scores row ---
     row = db.query(TrustScore).filter(TrustScore.subject == agent_id).first()
     if not row:
-        row = TrustScore(subject=agent_id, score=50.0, updated_at=datetime.utcnow())
+        row = TrustScore(subject=agent_id, score=50.0)
         db.add(row)
-        db.flush()  # don't commit here; caller controls transaction
+        db.flush()
 
     new_score = max(0.0, min(100.0, float(row.score) + float(delta)))
     row.score = new_score
     row.updated_at = datetime.utcnow()
 
-    # --- trust_history insert ---
-    hist = TrustHistory(
-        agent_id=agent_id,
-        score=new_score,
-        reason=reason,
-        created_at=datetime.utcnow(),
+    # Store history: here score is 0..100
+    db.add(
+        TrustHistory(
+            agent_id=agent_id,
+            score=new_score,
+            reason=reason,
+        )
     )
-    db.add(hist)
 
-    # --- sync Agent table trust_level (0..1) ---
-    from iam_core.db.models import Agent
+    # sync agent.trust_level 0..1
     agent = db.query(Agent).filter(Agent.agent_id == agent_id).first()
     if agent:
         agent.trust_level = round(new_score / 100.0, 3)
 
-    # caller will commit
-    return new_score
+    db.flush()
+    return float(new_score)
+
+
+# ------------------------------
+# 3) Required by dashboard.py
+# ------------------------------
+def get_trust_metrics(db: Session, agent_id: str, limit: int = 60):
+    """
+    Dashboard expects this function.
+    Returns trust history points for chart (oldest -> newest).
+    """
+    rows = (
+        db.query(TrustHistory)
+        .filter(TrustHistory.agent_id == agent_id)
+        .order_by(desc(TrustHistory.created_at))
+        .limit(limit)
+        .all()
+    )
+    rows = list(reversed(rows))  # oldest -> newest
+
+    out = []
+    for r in rows:
+        t = r.created_at.isoformat() if r.created_at else None
+        out.append(
+            {
+                "t": t,
+                "trust": float(r.score),
+                "reason": r.reason,
+            }
+        )
+    return out

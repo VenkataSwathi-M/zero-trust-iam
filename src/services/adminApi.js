@@ -1,54 +1,99 @@
 // src/services/adminApi.js
 import axios from "axios";
 
-const API = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+// Works for localhost + LAN IP automatically
+const host = window.location.hostname; // "localhost" or "192.168.31.211"
+const BASE_URL = "http://192.168.31.211:8000";
+
+const adminApi = axios.create({
+  baseURL: BASE_URL,
+  timeout: 15000,
 });
 
-// ✅ Attach Admin token automatically on every request
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem("admin_token"); // ✅ must match what you store
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Attach admin token on every request
+adminApi.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("admin_token");
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
-const adminApi = {
-  get: (url, config) => API.get(url, config),
-  post: (url, data, config) => API.post(url, data, config),
-  put: (url, data, config) => API.put(url, data, config),
-  patch: (url, data, config) => API.patch(url, data, config), // ✅ add patch
-  delete: (url, config) => API.delete(url, config),
-};
+// Auto-handle 401
+adminApi.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401) {
+      localStorage.removeItem("admin_token");
+      // optional redirect:
+      // window.location.href = "/admin/login";
+    }
+    return Promise.reject(err);
+  }
+);
 
 export default adminApi;
 
 /* =======================
-AGENTS
+   AGENTS
 ======================= */
 export const createAgent = async (data) => {
-  const res = await API.post("/admin/agents", data);
+  const res = await adminApi.post("/admin/agents", data);
   return res.data;
 };
 
 export const getAgents = async () => {
-  const res = await API.get("/admin/agents");
+  const res = await adminApi.get("/admin/agents");
   return res.data;
 };
 
 /* =======================
-POLICIES
+   POLICIES
 ======================= */
 export const createPolicy = async (data) => {
-  const res = await API.post("/admin/policies", data); // ✅ was api (wrong)
+  const res = await adminApi.post("/admin/policies", data);
   return res.data;
 };
 
 export const getPolicies = async () => {
-  const res = await API.get("/admin/policies"); // ✅ was api (wrong)
+  const res = await adminApi.get("/admin/policies");
   return res.data;
 };
 
 export const togglePolicyActive = async (policyId, active) => {
-  const res = await API.patch(`/admin/policies/${policyId}`, { active }); // ✅ was api (wrong)
+  const res = await adminApi.patch(`/admin/policies/${policyId}`, { active });
+  return res.data;
+};
+
+/* =======================
+   AUDIT LOGS
+======================= */
+export const getAuditLogs = async ({ agent_id, limit = 50 } = {}) => {
+  const params = {};
+  if (agent_id) params.agent_id = agent_id;
+  params.limit = limit;
+
+  const res = await adminApi.get("/admin/audit/logs", { params });
+  return res.data;
+};
+
+/* =======================
+   METRICS (trust + risk)
+======================= */
+export const getOverview = async () => {
+  const res = await adminApi.get("/admin/metrics/overview");
+  return res.data;
+};
+
+export const getRiskHistory = async (agentId) => {
+  const res = await adminApi.get(`/admin/metrics/risk-history/${agentId}`);
+  return res.data;
+};
+
+export const getTrustHistory = async (agentId, limit = 60) => {
+  const res = await adminApi.get(`/admin/metrics/trust-history/${agentId}`, {
+    params: { limit },
+  });
   return res.data;
 };

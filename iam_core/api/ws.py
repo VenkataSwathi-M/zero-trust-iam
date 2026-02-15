@@ -1,5 +1,7 @@
+# iam_core/api/ws.py
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import List
+import asyncio
 
 router = APIRouter()
 
@@ -16,18 +18,24 @@ class DecisionBroadcaster:
             self.connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        dead = []
         for ws in list(self.connections):
-            await ws.send_json(message)
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
 
-# 🔥 THIS MUST EXIST AT MODULE LEVEL
+        for ws in dead:
+            self.disconnect(ws)
+
+# ✅ MUST EXIST at module level
 decision_broadcaster = DecisionBroadcaster()
-
 
 @router.websocket("/ws/decisions")
 async def decision_ws(websocket: WebSocket):
     await decision_broadcaster.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            await asyncio.sleep(10)  # ✅ keep alive
     except WebSocketDisconnect:
         decision_broadcaster.disconnect(websocket)

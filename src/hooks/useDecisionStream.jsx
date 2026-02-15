@@ -1,24 +1,42 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function useDecisionStream() {
-const [events, setEvents] = useState([]);
-  const [trustMap, setTrustMap] = useState({}); // agent_id -> trust
+  const [events, setEvents] = useState([]);
+  const [trustMap, setTrustMap] = useState({});
+  const wsRef = useRef(null);
 
-useEffect(() => {
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws/decisions");
+  useEffect(() => {
+    const host = window.location.hostname;
+    const wsUrl = `ws://${host}:8000/ws/decisions`;
 
-    ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-    setEvents((prev) => [data, ...prev].slice(0, 300));
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
 
-    if (data.event === "TRUST_UPDATE") {
-        setTrustMap((prev) => ({ ...prev, [data.agent_id]: data.trust }));
-    }
+        setEvents((prev) => [msg, ...prev].slice(0, 200));
+
+        if (
+          msg?.event === "ACCESS_DECISION" &&
+          msg.agent_id &&
+          msg.trust !== undefined
+        ) {
+          setTrustMap((prev) => ({ ...prev, [msg.agent_id]: msg.trust }));
+        }
+      } catch {
+        // ignore invalid JSON
+      }
     };
 
-    return () => ws.close();
-}, []);
+    ws.onerror = () => {};
+    return () => {
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, []);
 
-return { events, trustMap };
+  return { events, trustMap };
 }

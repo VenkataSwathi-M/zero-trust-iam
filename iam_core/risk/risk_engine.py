@@ -1,65 +1,65 @@
 # iam_core/risk/risk_engine.py
+from dataclasses import dataclass
 
-from iam_core.knowledge.risk_pattern_store import get_patterns
+@dataclass
+class RiskInput:
+    auth_fail_rate: float = 0.0
+    mfa_fail_rate: float = 0.0
+    new_device: float = 0.0
+    token_reuse_anomaly: float = 0.0
+    request_spike: float = 0.0
+    unusual_endpoint: float = 0.0
+    high_priv_action: float = 0.0
+    night_access: float = 0.0
+    amount_anomaly: float = 0.0
+    new_beneficiary: float = 0.0
+
+
+def clamp01(x: float) -> float:
+    try:
+        return max(0.0, min(1.0, float(x)))
+    except Exception:
+        return 0.0
 
 
 def risk_score_from_trust(trust: float) -> float:
-    """Simple risk score derived from trust."""
-    return round(1 - float(trust), 2)
+    t = clamp01(trust)
+    return round(1.0 - t, 2)
 
 
 def risk_level(score: float) -> str:
-    """Convert numeric risk into label."""
-    if score >= 0.7:
+    r = clamp01(score)
+    if r >= 0.70:
         return "HIGH"
-    if score >= 0.4:
+    if r >= 0.35:
         return "MEDIUM"
     return "LOW"
 
 
+def compute_risk(inp: RiskInput) -> float:
+    weights = {
+        "auth_fail_rate": 0.15,
+        "mfa_fail_rate": 0.10,
+        "new_device": 0.10,
+        "token_reuse_anomaly": 0.20,
+        "request_spike": 0.10,
+        "unusual_endpoint": 0.10,
+        "high_priv_action": 0.10,
+        "night_access": 0.05,
+        "amount_anomaly": 0.05,
+        "new_beneficiary": 0.05,
+    }
+
+    score = 0.0
+    for k, w in weights.items():
+        score += w * clamp01(getattr(inp, k, 0.0))
+    return clamp01(score)
+
+
 class RiskAssessmentEngine:
-    """
-    Computes dynamic risk score with adaptive multipliers.
-    """
-
-    def __init__(self):
-        self.base_weights = {
-            "auth_fail": 0.25,
-            "deny": 0.20,
-            "trust_decay": 0.20,
-            "anomaly": 0.25,
-            "session_abuse": 0.10,
-        }
-
-    def adapt_weights(self, high_risk_count: int):
-        """
-        Increase sensitivity for repeated high-risk behavior.
-        """
-        weights = self.base_weights.copy()
-
-        if high_risk_count >= 3:
-            weights["anomaly"] += 0.10
-            weights["session_abuse"] += 0.05
-
-        return weights
-
-    def calculate_risk(self, signals: dict, identity_id: str | None = None) -> float:
-        """
-        signals example:
-          {"anomaly":1, "deny":0, "auth_fail":0, "session_abuse":0, "trust_decay":0}
-
-        get_patterns() returns adaptive multipliers per signal like:
-          {"anomaly": 1.3, "deny": 1.1, ...}
-        """
-        patterns = get_patterns(identity_id)  # ✅ multipliers
-        risk = 0.0
-
-        for signal, value in signals.items():
-            weight = self.base_weights.get(signal, 0.0)
-            adaptive = patterns.get(signal, 1.0)
-            risk += weight * adaptive * float(value)
-
-        return round(min(risk, 1.0), 2)
-
     def classify_risk(self, risk_score: float) -> str:
         return risk_level(risk_score)
+
+    def assess(self, inp: RiskInput) -> tuple[float, str]:
+        score = compute_risk(inp)
+        return score, self.classify_risk(score)

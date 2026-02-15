@@ -1,79 +1,143 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from passlib.context import CryptContext
+from datetime import datetime, timedelta, timezone
+import random
 import uuid
+import os
 
 from iam_core.db.database import get_db
-from iam_core.db.models import Agent
-from iam_core.security.passwords import verify_password
-from iam_core.mfa.otp_service import generate_otp, validate_otp
-from iam_core.security.email_service import send_otp_email
-from iam_core.security.jwt import create_access_token
-from iam_core.trust.trust_service import apply_trust_event
+from iam_core.db.models import Agent, AuditLog, TrustHistory
+from iam_core.auth.jwt_utils import create_access_token
+from iam_core.services.mailer import send_otp_email
+from iam_core.session.session_store import create_session, bump_trust
 
 router = APIRouter(prefix="/agent/auth", tags=["Agent Auth"])
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+OTP_TTL_MIN = 5
+OTP_DB = {}  # sid -> {agent_id, otp, expires_at, attempts}
 
-@router.post("/login")
-def agent_login(payload: dict, db: Session = Depends(get_db)):
-    agent_id = payload.get("agent_id")
-    password = payload.get("password")
+class SendOtpReq(BaseModel):
+    agent_id: str
+    password: str
 
-    if not agent_id or not password:
-        raise HTTPException(status_code=400, detail="agent_id and password required")
+class VerifyOtpReq(BaseModel):
+    sid: str
+    otp: str
 
-    agent = db.query(Agent).filter(Agent.agent_id == agent_id).first()
-    if not agent or not agent.active:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+def now_utc():
+    return datetime.now(timezone.utc)
 
-    if not verify_password(password, agent.hashed_password):
-        # ✅ FIX: pass event positionally
-        apply_trust_event(db, agent.agent_id, "AUTH_FAIL", -0.05, "wrong_password")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+@router.post("/send-otp")
+def send_otp(data: SendOtpReq, db: Session = Depends(get_db)):
+    agent = db.query(Agent).filter(Agent.agent_id == data.agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=401, detail="Invalid agent_id or password")
 
-    decision_id = str(uuid.uuid4())
-    otp = generate_otp(agent.agent_id, decision_id)
+    if not pwd_context.verify(data.password, agent.hashed_password):
+        db.add(AuditLog(
+            id=str(uuid.uuid4()),
+            agent_id=data.agent_id,
+            event_type="LOGIN_FAIL",
+            message="Agent login failed (wrong password)"
+        ))
+        agent.trust_level = max(0.0, float(agent.trust_level) - 0.05)
+        db.add(TrustHistory(agent_id=agent.agent_id, score=float(agent.trust_level), reason="login_fail"))
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid agent_id or password")
 
+    # ✅ create session and return sid
+    sid = create_session(
+        identity_id=agent.agent_id,
+        payload={"sub": agent.agent_id, "role": "agent", "trust": float(agent.trust_level)}
+    )
+
+    otp = str(random.randint(100000, 999999))
+    OTP_DB[sid] = {
+        "agent_id": agent.agent_id,
+        "otp": otp,
+        "expires_at": now_utc() + timedelta(minutes=OTP_TTL_MIN),
+        "attempts": 0,
+    }
+
+    if not agent.email:
+        raise HTTPException(status_code=400, detail="No email configured for this agent")
+
+    mode = os.getenv("OTP_MODE", "TERMINAL").upper()  # ✅ default terminal
+    if mode == "TERMINAL":
+        print(f"\n✅ OTP for {agent.agent_id} ({agent.email}) = {otp}  (valid {OTP_TTL_MIN} min)\n")
+        db.add(AuditLog(
+            id=str(uuid.uuid4()),
+            agent_id=agent.agent_id,
+            event_type="OTP_PRINTED",
+            message="OTP printed to terminal (dev fallback)"
+        ))
+        db.commit()
+        return {"message": "OTP printed in server terminal", "sid": sid, "ttl_minutes": OTP_TTL_MIN}
+
+    # PROD email mode
     try:
         send_otp_email(agent.email, otp)
     except Exception as e:
-        print("[EMAIL ERROR]", e)
-        print(f"[DEV OTP] OTP for {agent.email}: {otp}")
+        # fallback to terminal if email fails
+        print(f"\n⚠️ EMAIL FAILED, OTP for {agent.agent_id} = {otp}. Error: {e}\n")
+        return {"message": "Email failed, OTP printed in terminal", "sid": sid, "ttl_minutes": OTP_TTL_MIN}
 
-    return {"message": "OTP sent", "decision_id": decision_id}
+    db.add(AuditLog(
+        id=str(uuid.uuid4()),
+        agent_id=agent.agent_id,
+        event_type="OTP_SENT",
+        message=f"OTP sent to {agent.email}"
+    ))
+    db.commit()
 
+    return {"message": "OTP sent successfully", "sid": sid, "ttl_minutes": OTP_TTL_MIN}
 
 @router.post("/verify-otp")
-def verify_agent_otp(payload: dict, db: Session = Depends(get_db)):
-    agent_id = payload.get("agent_id")
-    otp = payload.get("otp")
-    decision_id = payload.get("decision_id")
+def verify_otp(data: VerifyOtpReq, db: Session = Depends(get_db)):
+    rec = OTP_DB.get(data.sid)
+    if not rec:
+        raise HTTPException(status_code=400, detail="OTP not found. Request OTP again.")
 
-    if not agent_id or not otp or not decision_id:
-        raise HTTPException(status_code=400, detail="agent_id, otp, decision_id required")
+    if now_utc() > rec["expires_at"]:
+        OTP_DB.pop(data.sid, None)
+        raise HTTPException(status_code=400, detail="OTP expired. Request OTP again.")
 
-    agent = db.query(Agent).filter(Agent.agent_id == agent_id).first()
-    if not agent or not agent.active:
+    rec["attempts"] += 1
+    if rec["attempts"] > 5:
+        OTP_DB.pop(data.sid, None)
+        raise HTTPException(status_code=429, detail="Too many OTP attempts.")
+
+    if data.otp != rec["otp"]:
+        db.add(AuditLog(
+            id=str(uuid.uuid4()),
+            agent_id=rec["agent_id"],
+            event_type="OTP_FAIL",
+            message="OTP verification failed"
+        ))
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid OTP")
+
+    OTP_DB.pop(data.sid, None)
+
+    agent = db.query(Agent).filter(Agent.agent_id == rec["agent_id"]).first()
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    ok = validate_otp(agent.agent_id, decision_id, otp)
-    if not ok:
-        # ✅ FIX: pass event positionally
-        apply_trust_event(db, agent.agent_id, "OTP_FAIL", -0.05, "wrong_otp")
-        raise HTTPException(status_code=401, detail="Invalid or expired OTP")
+    agent.trust_level = min(1.0, float(agent.trust_level) + 0.02)
+    db.add(TrustHistory(agent_id=agent.agent_id, score=float(agent.trust_level), reason="mfa_success"))
+    db.add(AuditLog(id=str(uuid.uuid4()), agent_id=agent.agent_id, event_type="LOGIN_SUCCESS", message="OTP verified"))
 
-    # ✅ FIX: pass event positionally
-    apply_trust_event(db, agent.agent_id, "OTP_OK", 0.02, "otp_verified")
-
-    # IMPORTANT: refresh agent trust from DB (because apply_trust_event updates it)
-    db.refresh(agent)
-
-    if agent.trust_level < 0.4:
-        raise HTTPException(status_code=403, detail="Low trust score")
-
+    # ✅ token includes sid (required)
     token = create_access_token({
         "sub": agent.agent_id,
         "role": "agent",
-        "trust": agent.trust_level,
+        "trust": float(agent.trust_level),
+        "sid": data.sid,
     })
 
-    return {"access_token": token, "token_type": "bearer"}
+    db.commit()
+
+    return {"access_token": token, "token_type": "bearer", "agent_id": agent.agent_id, "sid": data.sid}

@@ -6,8 +6,8 @@ export default function AgentLayout() {
 const navigate = useNavigate();
 
 useEffect(() => {
-  const token = localStorage.getItem("token");
-  if (!token) navigate("/agent/login");
+const token = localStorage.getItem("token");
+if (!token) navigate("/agent/login");
 }, [navigate]);
 
 const logout = () => {

@@ -14,7 +14,7 @@ SessionLocal = sessionmaker(
     bind=engine
 )
 
-# ✅ SINGLE Base for entire app
+# SINGLE Base for entire app
 Base = declarative_base()
 
 def get_db():

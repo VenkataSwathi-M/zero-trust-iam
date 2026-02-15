@@ -1,38 +1,30 @@
 # iam_core/admin/admin_routes.py
-
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import uuid
 
-from iam_core.auth.jwt_utils import decode_access_token
-from iam_core.session.session_store import get_session
-from iam_core.metrics.store import METRICS
+from iam_core.auth.admin_deps import get_current_admin   # ✅ use this
 from iam_core.db.database import get_db
-from iam_core.db.models import Agent, Policy  # ✅ add Policy
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from iam_core.auth.jwt_utils import decode_access_token
+from iam_core.db.models import Agent, Policy
+from iam_core.metrics.store import METRICS
+
+admin_router = APIRouter(
+    prefix="/admin_old",
+    tags=["Admin (Deprecated)"],
+    include_in_schema=False,   # ✅ recommended to avoid swagger duplicates
+)
 # ---------------- Security ----------------
 security = HTTPBearer()
 
-security = HTTPBearer()
-
-def get_current_identity(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    token = credentials.credentials
-    payload = decode_access_token(token)
-
+def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    payload = decode_access_token(credentials.credentials)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    # ✅ Check role
     if payload.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # ✅ Check session (THIS is where your sid logic goes)
     sid = payload.get("sid")
     if not sid:
         raise HTTPException(status_code=401, detail="Missing session id")
@@ -44,7 +36,7 @@ def get_current_identity(
     return payload
 
 # ---------------- Router ----------------
-admin_router = APIRouter(prefix="/admin", tags=["Admin"])
+admin_router = APIRouter(prefix="/admin_old", tags=["Admin (Deprecated)"])
 
 # ---------------- Schemas ----------------
 class AgentCreateRequest(BaseModel):
@@ -75,7 +67,7 @@ class PolicyUpdateRequest(BaseModel):
 
 # ---------------- Metrics API ----------------
 @admin_router.get("/metrics")
-def get_metrics(identity=Depends(get_current_identity)):
+def get_metrics(identity=Depends(get_current_admin)):
     return {
         "transactions": METRICS.get("transactions", 0),
         "deny_rate": round(
@@ -88,10 +80,10 @@ def get_metrics(identity=Depends(get_current_identity)):
         "policy_denials": METRICS.get("policy_denials", 0),
     }
 
-# ✅ Your frontend is calling /admin/metrics/overview → add it
+# Your frontend is calling /admin/metrics/overview → add it
 @admin_router.get("/metrics/overview")
 def metrics_overview(
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     total_agents = db.query(Agent).count()
@@ -114,7 +106,7 @@ def metrics_overview(
 @admin_router.post("/agents")
 def create_agent(
     data: AgentCreateRequest,
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     agent_id = f"agent_{uuid.uuid4().hex[:8]}"
@@ -142,7 +134,7 @@ def create_agent(
 # ---------------- List Agents ----------------
 @admin_router.get("/agents")
 def list_agents(
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     return db.query(Agent).all()
@@ -150,7 +142,7 @@ def list_agents(
 # ---------------- Policies ----------------
 @admin_router.get("/policies")
 def list_policies(
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     return db.query(Policy).all()
@@ -158,7 +150,7 @@ def list_policies(
 @admin_router.post("/policies")
 def create_policy(
     data: PolicyCreateRequest,
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     p = Policy(
@@ -182,7 +174,7 @@ def create_policy(
 def update_policy(
     policy_id: str,
     data: PolicyUpdateRequest,
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     p = db.query(Policy).filter(Policy.id == policy_id).first()
@@ -202,7 +194,7 @@ def update_policy(
 @admin_router.delete("/policies/{policy_id}")
 def delete_policy(
     policy_id: str,
-    identity=Depends(get_current_identity),
+    identity=Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     p = db.query(Policy).filter(Policy.id == policy_id).first()

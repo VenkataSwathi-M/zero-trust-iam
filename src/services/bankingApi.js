@@ -1,12 +1,42 @@
-import api from "./api";
+import axios from "axios";
 
-export const listAccounts = async () => (await api.get("/banking/accounts")).data;
+const BASE_URL = "http://192.168.31.211:8000";
 
-export const createAccount = async (payload) =>
-  (await api.post("/banking/accounts", payload)).data;
+const bankingApi = axios.create({
+  baseURL: BASE_URL,
+  timeout: 15000,
+});
 
-export const updateAccount = async (id, payload) =>
-  (await api.put(`/banking/accounts/${id}`, payload)).data;
+// attach token
+bankingApi.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
 
-export const transferMoney = async (payload) =>
-  (await api.post("/banking/transfer", payload)).data;
+export default bankingApi;
+
+/* ------------------ READ ------------------ */
+
+export const getMyAccount = async () =>
+  (await bankingApi.get("/banking/me")).data;
+
+export const getMyTransactions = async (limit = 50) =>
+  (await bankingApi.get("/banking/transactions", { params: { limit } })).data;
+
+export const getBeneficiaries = async () =>
+  (await bankingApi.get("/banking/beneficiaries")).data;
+
+/* ------------------ WRITE ------------------ */
+
+export const updateProfile = async ({ name, phone }) =>
+  (await bankingApi.post("/banking/profile", { name, phone })).data;
+
+/* ------------------ TRANSFER ------------------ */
+
+export const makeTransfer = async ({ to_account, amount, note }) =>
+  (await bankingApi.post("/banking/transfer", {
+    to_account,
+    amount,
+    note,
+  })).data;

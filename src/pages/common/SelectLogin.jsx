@@ -2,33 +2,33 @@ import { Box, Button, Card, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 
 export default function SelectLogin() {
-  const navigate = useNavigate();
+const navigate = useNavigate();
 
-  return (
+return (
     <Box sx={{ minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
-      <Card sx={{ p: 4, width: 360, textAlign: "center" }}>
+    <Card sx={{ p: 4, width: 360, textAlign: "center" }}>
         <Typography variant="h6" gutterBottom>
-          Login As
+        Login As
         </Typography>
 
         <Button
-          fullWidth
-          variant="contained"
-          sx={{ mt: 2 }}
-          onClick={() => navigate("/admin/login")}
+        fullWidth
+        variant="contained"
+        sx={{ mt: 2 }}
+        onClick={() => navigate("/admin/login")}
         >
-          Admin
+        Admin
         </Button>
 
         <Button
-          fullWidth
-          variant="outlined"
-          sx={{ mt: 2 }}
-          onClick={() => navigate("/agent/login")}
+        fullWidth
+        variant="outlined"
+        sx={{ mt: 2 }}
+        onClick={() => navigate("/agent/login")}
         >
-          Agent
+        Agent
         </Button>
-      </Card>
+    </Card>
     </Box>
-  );
+);
 }

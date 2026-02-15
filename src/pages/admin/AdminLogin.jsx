@@ -27,7 +27,7 @@ export default function AdminLogin() {
 
     try {
       // ✅ backend call (you must implement this route in FastAPI)
-      const res = await axios.post("http://127.0.0.1:8000/admin/auth/login", {
+      const res = await axios.post("http://192.168.31.211:8000/admin/auth/login", {
         email,
         password,
       });
